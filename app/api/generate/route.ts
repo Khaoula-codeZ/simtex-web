@@ -3,39 +3,44 @@ import { NextRequest, NextResponse } from "next/server";
 export async function POST(req: NextRequest) {
   const body = await req.json();
 
-  const API_BASE = process.env.SIMTEX_API_URL || "http://127.0.0.1:8010";
+  const API_BASE = process.env.SIMTEX_API_URL; // do NOT fallback to localhost in production
 
-  let r: Response;
+  if (!API_BASE) {
+    return NextResponse.json(
+      { error: "SIMTEX_API_URL is not set in Vercel environment variables" },
+      { status: 200 }
+    );
+  }
+
   try {
-    r = await fetch(`${API_BASE}/generate`, {
+    const r = await fetch(`${API_BASE}/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+
+    const raw = await r.text();
+    let data: any;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = { error: "Bad JSON from backend", raw };
+    }
+
+    // Always return 200 so the UI shows the backend error instead of a generic 500.
+    return NextResponse.json(
+      { upstream_status: r.status, ...data },
+      { status: 200 }
+    );
   } catch (e: any) {
-    return NextResponse.json({
-      ok: false,
-      error: `Backend unreachable: ${e?.message || String(e)}`,
-      hint: "Check SIMTEX_API_URL on Vercel and Railway service status.",
-    });
+    return NextResponse.json(
+      {
+        error: "Fetch to SIMTEX_API_URL failed from Vercel",
+        api_base: API_BASE,
+        detail: String(e?.message || e),
+      },
+      { status: 200 }
+    );
   }
-
-  const data = await r.json().catch(() => ({ error: "Bad JSON from backend" }));
-
-  // Normalize response so the UI never crashes on missing fields
-  const ok = r.ok && !data?.error;
-
-  // If Geant4 is generate-only on cloud, make that explicit
-  const cloudNote =
-    body?.engine === "geant4"
-      ? "Cloud mode: Geant4 runs are not executed on the server. Files are generated for local execution."
-      : undefined;
-
-  return NextResponse.json({
-    ok,
-    ...data,
-    note: data?.note || cloudNote,
-    status: r.status,
-  });
 }
 
