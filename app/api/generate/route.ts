@@ -1,40 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export const runtime = "nodejs";          // IMPORTANT
+export const dynamic = "force-dynamic";   // IMPORTANT
+
 export async function POST(req: NextRequest) {
-  try {
-    let body: any = {};
-    try {
-      body = await req.json();
-    } catch (e: any) {
-      return NextResponse.json(
-        { error: "Failed to parse JSON body in Vercel route", detail: String(e?.message || e) },
-        { status: 200 }
-      );
-    }
+  const body = await req.json();
 
-    const API_BASE = process.env.SIMTEX_API_URL;
-    if (!API_BASE) {
-      return NextResponse.json(
-        { error: "SIMTEX_API_URL is not set in Vercel env vars" },
-        { status: 200 }
-      );
-    }
+  const API_BASE = process.env.SIMTEX_API_URL || "http://127.0.0.1:8010";
 
-    const r = await fetch(`${API_BASE}/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    const raw = await r.text();
-    let data: any;
-    try { data = JSON.parse(raw); } catch { data = { error: "Bad JSON from backend", raw }; }
-
-    return NextResponse.json({ upstream_status: r.status, ...data }, { status: 200 });
-  } catch (e: any) {
+  // TEMP DEBUG: return what Vercel sees
+  if (body?.__debug === true) {
     return NextResponse.json(
-      { error: "Vercel /api/generate crashed", detail: String(e?.message || e) },
+      {
+        seen_api_base: API_BASE,
+        has_env: !!process.env.SIMTEX_API_URL,
+      },
       { status: 200 }
     );
   }
+
+  const r = await fetch(`${API_BASE}/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const data = await r.json().catch(() => ({ error: "Bad JSON from backend" }));
+  return NextResponse.json(data, { status: r.ok ? 200 : 500 });
 }
