@@ -1,56 +1,55 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-function getApiBase() {
-  const v = process.env.SIMTEX_API_URL?.trim();
-
-  // On Vercel, NEVER fall back to localhost (it will always fail).
-  if (!v) {
-    throw new Error(
-      "SIMTEX_API_URL is missing in Vercel Environment Variables. Set it in Project Settings → Environment Variables, then redeploy."
-    );
-  }
-
-  return v.replace(/\/+$/, ""); // strip trailing slash
-}
-
-export async function GET() {
-  // health + env visibility
-  return NextResponse.json({
-    ok: true,
-    has_SIMTEX_API_URL: !!process.env.SIMTEX_API_URL,
-    SIMTEX_API_URL_preview: (process.env.SIMTEX_API_URL || "").slice(0, 60),
-  });
-}
-
 export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const API_BASE = getApiBase();
+  const body = await req.json().catch(() => ({}));
 
-    const r = await fetch(`${API_BASE}/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      // optional: prevent caching weirdness
-      cache: "no-store",
-    });
+  const API_BASE = process.env.SIMTEX_API_URL;
 
-    const text = await r.text(); // read raw first
-    let data: any = null;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = { error: "Backend returned non-JSON", raw: text };
-    }
-
-    return NextResponse.json(data, { status: r.ok ? 200 : 502 });
-  } catch (e: any) {
+  // On Vercel, NEVER fall back to localhost.
+  if (!API_BASE) {
     return NextResponse.json(
-      { error: String(e?.message || e) },
+      {
+        error:
+          "SIMTEX_API_URL is not set in Vercel Environment Variables (Project Settings).",
+      },
       { status: 500 }
     );
   }
+
+  // Require https:// so we don't accidentally set a broken value.
+  if (!/^https?:\/\//.test(API_BASE)) {
+    return NextResponse.json(
+      {
+        error:
+          "SIMTEX_API_URL must start with https:// (example: https://web-production-63a8a.up.railway.app)",
+        got: API_BASE,
+      },
+      { status: 500 }
+    );
+  }
+
+  let r: Response;
+  try {
+    r = await fetch(`${API_BASE}/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: "Fetch to SimTex backend failed", detail: String(e?.message || e) },
+      { status: 500 }
+    );
+  }
+
+  const text = await r.text();
+  // Always return JSON, even if backend returns plain text
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = { raw: text };
+  }
+
+  return NextResponse.json(data, { status: r.ok ? 200 : 500 });
 }
