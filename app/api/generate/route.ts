@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export const runtime = "nodejs"; // force Node runtime (not Edge)
 
 const PROD_FALLBACK = "https://web-production-63a8a.up.railway.app";
 
