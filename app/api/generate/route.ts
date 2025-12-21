@@ -1,66 +1,55 @@
 import { NextRequest, NextResponse } from "next/server";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function getApiBase() {
+  const v = process.env.SIMTEX_API_URL?.trim();
 
-const PROD_FALLBACK = "https://web-production-63a8a.up.railway.app";
+  // On Vercel, NEVER fall back to localhost (it will always fail).
+  if (!v) {
+    throw new Error(
+      "SIMTEX_API_URL is missing in Vercel Environment Variables. Set it in Project Settings → Environment Variables, then redeploy."
+    );
+  }
+
+  return v.replace(/\/+$/, ""); // strip trailing slash
+}
 
 export async function GET() {
-  // ✅ no body parsing, cannot crash
+  // health + env visibility
   return NextResponse.json({
     ok: true,
-    route: "/api/generate",
     has_SIMTEX_API_URL: !!process.env.SIMTEX_API_URL,
-    SIMTEX_API_URL: process.env.SIMTEX_API_URL || null,
-    is_vercel: !!process.env.VERCEL,
+    SIMTEX_API_URL_preview: (process.env.SIMTEX_API_URL || "").slice(0, 60),
   });
 }
 
 export async function POST(req: NextRequest) {
-  // ✅ protect body parsing
-  let body: any = null;
   try {
-    body = await req.json();
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: "Bad JSON request body", detail: String(e?.message || e) },
-      { status: 400 }
-    );
-  }
+    const body = await req.json();
+    const API_BASE = getApiBase();
 
-  const API_BASE =
-    process.env.SIMTEX_API_URL ||
-    (process.env.VERCEL ? PROD_FALLBACK : "http://127.0.0.1:8010");
-
-  // ✅ debug mode returns immediately, no fetch
-  if (body?.__debug === true) {
-    return NextResponse.json({
-      ok: true,
-      seen_api_base: API_BASE,
-      has_env: !!process.env.SIMTEX_API_URL,
-      is_vercel: !!process.env.VERCEL,
-    });
-  }
-
-  try {
     const r = await fetch(`${API_BASE}/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      // optional: prevent caching weirdness
+      cache: "no-store",
     });
 
-    const text = await r.text();
-    let data: any;
+    const text = await r.text(); // read raw first
+    let data: any = null;
     try {
-      data = JSON.parse(text);
+      data = text ? JSON.parse(text) : null;
     } catch {
-      data = { error: text || "Non-JSON from backend" };
+      data = { error: "Backend returned non-JSON", raw: text };
     }
 
-    return NextResponse.json(data, { status: r.ok ? 200 : 500 });
+    return NextResponse.json(data, { status: r.ok ? 200 : 502 });
   } catch (e: any) {
     return NextResponse.json(
-      { error: "Fetch failed", detail: String(e?.message || e) },
+      { error: String(e?.message || e) },
       { status: 500 }
     );
   }
