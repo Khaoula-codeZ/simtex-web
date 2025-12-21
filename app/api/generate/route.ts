@@ -1,30 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export const runtime = "nodejs";          // IMPORTANT
-export const dynamic = "force-dynamic";   // IMPORTANT
+export const runtime = "nodejs";
+
+const PROD_FALLBACK = "https://web-production-63a8a.up.railway.app";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
 
-  const API_BASE = process.env.SIMTEX_API_URL || "http://127.0.0.1:8010";
+  // ✅ Always use Railway on Vercel if env is missing
+  const API_BASE =
+    process.env.SIMTEX_API_URL ||
+    (process.env.VERCEL ? PROD_FALLBACK : "http://127.0.0.1:8010");
 
-  // TEMP DEBUG: return what Vercel sees
+  // ✅ Debug without crashing
   if (body?.__debug === true) {
-    return NextResponse.json(
-      {
-        seen_api_base: API_BASE,
-        has_env: !!process.env.SIMTEX_API_URL,
-      },
-      { status: 200 }
-    );
+    return NextResponse.json({
+      seen_api_base: API_BASE,
+      has_env: !!process.env.SIMTEX_API_URL,
+      is_vercel: !!process.env.VERCEL,
+    });
   }
 
-  const r = await fetch(`${API_BASE}/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  try {
+    const r = await fetch(`${API_BASE}/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
-  const data = await r.json().catch(() => ({ error: "Bad JSON from backend" }));
-  return NextResponse.json(data, { status: r.ok ? 200 : 500 });
+    const text = await r.text();
+    let data: any;
+    try { data = JSON.parse(text); } catch { data = { error: text || "Non-JSON from backend" }; }
+
+    return NextResponse.json(data, { status: r.ok ? 200 : 500 });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: `Fetch failed`, detail: String(e?.message || e) },
+      { status: 500 }
+    );
+  }
 }
