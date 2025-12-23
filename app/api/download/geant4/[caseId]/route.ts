@@ -1,33 +1,51 @@
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs"; // important: allow streaming/buffers
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function getBaseUrl() {
+  // This MUST be set in Vercel env for Production (and Preview if you use preview deploys)
+  const base = process.env.SIMTEX_API_URL;
+  if (!base) return null;
+  return base.replace(/\/+$/, "");
+}
 
 export async function GET(
   _req: Request,
-  ctx: { params: Promise<{ caseId: string }> }
+  { params }: { params: { caseId: string } }
 ) {
-  const { caseId } = await ctx.params;
-
-  const base = process.env.SIMTEX_API_URL;
+  const base = getBaseUrl();
   if (!base) {
-    return NextResponse.json({ error: "SIMTEX_API_URL is not set" }, { status: 500 });
+    return NextResponse.json(
+      { error: "SIMTEX_API_URL is not set on Vercel." },
+      { status: 500 }
+    );
   }
 
-  const upstream = `${base.replace(/\/+$/, "")}/download/geant4/${encodeURIComponent(caseId)}`;
+  const caseId = params.caseId;
+  const upstream = `${base}/download/geant4/${encodeURIComponent(caseId)}`;
 
-  const r = await fetch(upstream, { method: "GET" });
+  const r = await fetch(upstream, {
+    method: "GET",
+    // don’t cache zip downloads on Vercel
+    cache: "no-store",
+  });
 
   if (!r.ok) {
     const txt = await r.text().catch(() => "");
     return NextResponse.json(
-      { error: `Upstream download failed (${r.status})`, details: txt.slice(0, 500) },
+      { error: "Upstream ZIP fetch failed", status: r.status, body: txt.slice(0, 400) },
       { status: 502 }
     );
   }
 
-  const buf = Buffer.from(await r.arrayBuffer());
+  const body = r.body;
+  if (!body) {
+    return NextResponse.json({ error: "Upstream response has no body." }, { status: 502 });
+  }
 
-  return new NextResponse(buf, {
+  // Stream ZIP back to browser
+  return new NextResponse(body as any, {
     status: 200,
     headers: {
       "Content-Type": "application/zip",

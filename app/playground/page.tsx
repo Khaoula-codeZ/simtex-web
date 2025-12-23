@@ -9,6 +9,12 @@ const DEFAULT_PROMPT = `30 MeV proton beam on a 30x30x30 cm³ water phantom.
 Field size 10x10 cm², distance 100 cm.
 Score voxelized dose in the phantom volume.`;
 
+function extractCaseId(caseDir?: string | null) {
+  if (!caseDir) return null;
+  const parts = caseDir.split("/").filter(Boolean);
+  return parts[parts.length - 1] || null;
+}
+
 export default function PlaygroundPage() {
   const [engine, setEngine] = useState<Engine>("phits");
   const [prompt, setPrompt] = useState<string>(DEFAULT_PROMPT);
@@ -21,11 +27,14 @@ export default function PlaygroundPage() {
   // API output
   const [result, setResult] = useState<any>(null);
   const [pngUrl, setPngUrl] = useState<string | null>(null);
+
+  // ✅ Geant4 case id for ZIP download
+  const [caseId, setCaseId] = useState<string | null>(null);
+
+  // PHITS preview
   const [phitsPngUrl, setPhitsPngUrl] = useState<string | null>(null);
   const [phitsPreview, setPhitsPreview] = useState<any>(null);
   const [phitsPreviewLoading, setPhitsPreviewLoading] = useState(false);
-
-
 
   // Email gate
   const [email, setEmail] = useState("");
@@ -76,130 +85,148 @@ export default function PlaygroundPage() {
 
       setEmailOk(true);
       setEmailMsg(null);
-
-      // remember locally so they don’t re-enter every refresh
       localStorage.setItem("simtex_email", clean);
     } catch {
       setEmailMsg("Network error submitting email.");
     }
   };
-  const refreshPreview = async (next?: Partial<{ slice_z: number; slice_axis: Axis; autoscale: boolean }>) => {
-  if (engine !== "geant4") return;
-  try {
-    const res = await fetch("/api/preview", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        slice_z: next?.slice_z ?? sliceZ,
-        slice_axis: next?.slice_axis ?? sliceAxis,
-        autoscale: next?.autoscale ?? autoscale,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) return;
 
-    // backend returns { png: "/abs/path/....png", stats?: ... }
-    if (data?.png) setPngUrl(`/api/file?path=${encodeURIComponent(data.png)}&t=${Date.now()}`);
-    if (data?.stats) setResult((prev: any) => ({ ...(prev || {}), stats: data.stats }));
-  } catch {
-    // ignore preview errors
-  }
-};
+  const refreshPreview = async (
+    next?: Partial<{ slice_z: number; slice_axis: Axis; autoscale: boolean }>
+  ) => {
+    if (engine !== "geant4") return;
+
+    try {
+      const res = await fetch("/api/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slice_z: next?.slice_z ?? sliceZ,
+          slice_axis: next?.slice_axis ?? sliceAxis,
+          autoscale: next?.autoscale ?? autoscale,
+        }),
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) return;
+
+      if (data?.png) {
+        setPngUrl(`/api/file?path=${encodeURIComponent(data.png)}&t=${Date.now()}`);
+      }
+      if (data?.stats) {
+        setResult((prev: any) => ({ ...(prev || {}), stats: data.stats }));
+      }
+    } catch {
+      // ignore preview errors
+    }
+  };
+
   useEffect(() => {
     if (engine !== "geant4") return;
-    // don’t call preview until we already have a run result (pngUrl set once)
-    if (!pngUrl) return;
+    if (!pngUrl) return; // don't preview until we have something
     refreshPreview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine, sliceZ, sliceAxis, autoscale]);
 
   const downloadText = (name: string, text: string) => {
-  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
-};
-const refreshPhitsPreview = async (path?: string) => {
-  if (engine !== "phits") return;
-  setPhitsPreviewLoading(true);
-  try {
-    const res = await fetch("/api/phits_preview", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(path ? { path } : {}),
-    });
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
-    const data = await res.json().catch(() => null);
-    if (!res.ok || !data) return;
+  const refreshPhitsPreview = async (path?: string) => {
+    if (engine !== "phits") return;
 
-    setPhitsPreview(data);
-    if (data?.png) {
-      setPhitsPngUrl(`/api/file?path=${encodeURIComponent(data.png)}`);
+    setPhitsPreviewLoading(true);
+    try {
+      const res = await fetch("/api/phits_preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(path ? { path } : {}),
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) return;
+
+      setPhitsPreview(data);
+      if (data?.png) {
+        setPhitsPngUrl(`/api/file?path=${encodeURIComponent(data.png)}`);
+      }
+    } finally {
+      setPhitsPreviewLoading(false);
     }
-  } finally {
-    setPhitsPreviewLoading(false);
-  }
-};
-
-
+  };
 
   const handleGenerate = async () => {
-  setIsGenerating(true);
-  setResult(null);
-  setPngUrl(null);
+    setIsGenerating(true);
+    setResult(null);
+    setPngUrl(null);
+    setCaseId(null);
 
-  try {
-    const payload: any = { engine, prompt };
+    try {
+      const payload: any = { engine, prompt };
 
-    if (engine === "geant4") {
-      payload.slice_z = sliceZ;
-      payload.slice_axis = sliceAxis;
-      payload.autoscale = autoscale;
+      if (engine === "geant4") {
+        payload.slice_z = sliceZ;
+        payload.slice_axis = sliceAxis;
+        payload.autoscale = autoscale;
+      }
+
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => null);
+        const msg = errBody?.error || `Request failed with status ${res.status}`;
+        setOutput(`// Error from SimTex API:\n// ${msg}`);
+        return;
+      }
+
+      const data = await res.json();
+      setResult(data);
+
+      // ✅ extract caseId for Geant4 ZIP route
+      if (engine === "geant4") {
+        const direct: string | null = (data as any)?.case_id ?? null;
+
+        const caseDir: string | undefined = (data as any)?.case_dir;
+        const fromCaseDir =
+          caseDir?.match(/geant4_case_cloud\/([^/]+)/)?.[1] ?? extractCaseId(caseDir);
+
+        const gdml: string | undefined = (data as any)?.files?.gdml;
+        const fromGdml = gdml?.match(/geant4_case_cloud\/([^/]+)/)?.[1] ?? null;
+
+        setCaseId(direct ?? fromCaseDir ?? fromGdml ?? null);
+      }
+
+      // normalize backend shape:
+      const normalized =
+        data && typeof data === "object" && "output" in data ? (data as any).output : data;
+
+      if (typeof normalized === "string") setOutput(normalized);
+      else setOutput(JSON.stringify(normalized, null, 2));
+
+      if (data?.png) {
+        setPngUrl(`/api/file?path=${encodeURIComponent(data.png)}&t=${Date.now()}`);
+      }
+    } catch (error: any) {
+      console.error(error);
+      setOutput("// Network error while calling SimTex API.\n// Check the dev server and try again.");
+    } finally {
+      setIsGenerating(false);
     }
+  };
 
-    const res = await fetch("/api/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+  // 👇 keep the rest of your component (stats/return JSX) below
 
-    if (!res.ok) {
-      const errBody = await res.json().catch(() => null);
-      const msg = errBody?.error || `Request failed with status ${res.status}`;
-      setOutput(`// Error from SimTex API:\n// ${msg}`);
-      return;
-    }
 
-    const data = await res.json();
-    setResult(data);
-
-    // normalize backend shape:
-    // PHITS/FLUKA => { output: "..." }
-    // Geant4 => { case_dir, png, stats, ... }
-    const normalized =
-      data && typeof data === "object" && "output" in data ? (data as any).output : data;
-
-    if (typeof normalized === "string") {
-      setOutput(normalized);
-    } else {
-      setOutput(JSON.stringify(normalized, null, 2));
-    }
-
-    if (data?.png) {
-      setPngUrl(`/api/file?path=${encodeURIComponent(data.png)}`);
-    }
-  } catch (error: any) {
-    console.error(error);
-    setOutput(
-      "// Network error while calling SimTex API.\n// Check the dev server and try again."
-    );
-  } finally {
-    setIsGenerating(false);
-  }
-};
 
 
 
@@ -484,14 +511,13 @@ const refreshPhitsPreview = async (path?: string) => {
             </a>
           )}
 
-          {engine === "geant4" && typeof output === "string" && output.length > 0 && (
-            <button
-              type="button"
-              onClick={() => downloadText(`geant4_output.json`, output)}
-              className="rounded-full border border-slate-700/80 bg-slate-900/70 px-4 py-1.5 text-xs text-slate-200 hover:border-cyan-400/80 hover:text-cyan-200"
+          {engine === "geant4" && caseId && (
+            <a
+              href={`/api/download/geant4/${encodeURIComponent(caseId)}`}
+              className="inline-flex items-center rounded-full border border-slate-700/80 bg-slate-900/70 px-4 py-1.5 text-xs text-slate-200 hover:border-cyan-400/80 hover:text-cyan-200"
             >
-              Download JSON
-            </button>
+              Download Geant4 ZIP
+            </a>
           )}
         </div>
 
