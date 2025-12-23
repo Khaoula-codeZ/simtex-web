@@ -9,6 +9,31 @@ const DEFAULT_PROMPT = `30 MeV proton beam on a 30x30x30 cm³ water phantom.
 Field size 10x10 cm², distance 100 cm.
 Score voxelized dose in the phantom volume.`;
 
+function deriveGeant4CaseId(r: any): string | null {
+  if (!r) return null;
+
+  // direct (if you ever add it later)
+  if (typeof r.case_id === "string" && r.case_id.length > 0) return r.case_id;
+
+  // from case_dir
+  if (typeof r.case_dir === "string") {
+    const m = r.case_dir.match(/geant4_case_cloud\/([^/]+)/);
+    if (m?.[1]) return m[1];
+    const last = extractCaseId(r.case_dir);
+    if (last) return last;
+  }
+
+  // from files.gdml
+  const gdml = r?.files?.gdml;
+  if (typeof gdml === "string") {
+    const m2 = gdml.match(/geant4_case_cloud\/([^/]+)/);
+    if (m2?.[1]) return m2[1];
+  }
+
+  return null;
+}
+
+
 function extractCaseId(caseDir?: string | null) {
   if (!caseDir) return null;
   const parts = caseDir.split("/").filter(Boolean);
@@ -233,6 +258,8 @@ export default function PlaygroundPage() {
   const stats = result?.stats;
   const normalized =
     result && typeof result === "object" && "output" in result ? (result as any).output : result;
+  const derivedCaseId = engine === "geant4" ? deriveGeant4CaseId(result) : null;
+
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50">
@@ -501,24 +528,15 @@ export default function PlaygroundPage() {
           )}
 
           {/* Geant4 downloads */}
-          {engine === "geant4" && result?.png && (
-            <a
-              href={`/api/file?path=${encodeURIComponent(result.png)}`}
-              download
-              className="inline-flex items-center rounded-full border border-slate-700/80 bg-slate-900/70 px-4 py-1.5 text-xs text-slate-200 hover:border-cyan-400/80 hover:text-cyan-200"
-            >
-              Download PNG
-            </a>
-          )}
+        {engine === "geant4" && derivedCaseId && (
+          <a
+            href={`/api/download/geant4/${encodeURIComponent(derivedCaseId)}`}
+            className="inline-flex items-center rounded-full border border-slate-700/80 bg-slate-900/70 px-4 py-1.5 text-xs text-slate-200 hover:border-cyan-400/80 hover:text-cyan-200"
+          >
+            Download Geant4 ZIP
+          </a>
+)}
 
-          {engine === "geant4" && caseId && (
-            <a
-              href={`/api/download/geant4/${encodeURIComponent(caseId)}`}
-              className="inline-flex items-center rounded-full border border-slate-700/80 bg-slate-900/70 px-4 py-1.5 text-xs text-slate-200 hover:border-cyan-400/80 hover:text-cyan-200"
-            >
-              Download Geant4 ZIP
-            </a>
-          )}
         </div>
 
         {/* PHITS preview image goes HERE (not inside actions bar) */}
