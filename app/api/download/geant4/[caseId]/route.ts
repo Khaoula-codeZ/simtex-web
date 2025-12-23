@@ -1,13 +1,15 @@
 // app/api/download/geant4/[caseId]/route.ts
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs"; // important: we stream bytes
-export const dynamic = "force-dynamic"; // avoid caching weirdness
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type Ctx = { params: { caseId: string } };
+export async function GET(_req: any, context: any) {
+  const caseId = context?.params?.caseId;
 
-export async function GET(_req: Request, { params }: Ctx) {
-  const caseId = params.caseId;
+  if (!caseId) {
+    return NextResponse.json({ error: "Missing caseId param." }, { status: 400 });
+  }
 
   const base = process.env.SIMTEX_API_URL;
   if (!base) {
@@ -17,15 +19,9 @@ export async function GET(_req: Request, { params }: Ctx) {
     );
   }
 
-  // This should point to your BACKEND (Railway) endpoint that returns the ZIP.
-  // Example backend route: GET /download/geant4/:caseId
-  const url = `${base.replace(/\/$/, "")}/download/geant4/${encodeURIComponent(caseId)}`;
+  const url = `${String(base).replace(/\/$/, "")}/download/geant4/${encodeURIComponent(caseId)}`;
 
-  const upstream = await fetch(url, {
-    method: "GET",
-    // If your Railway endpoint requires auth, add it here.
-    // headers: { Authorization: `Bearer ${process.env.SIMTEX_API_KEY}` },
-  });
+  const upstream = await fetch(url, { method: "GET" });
 
   if (!upstream.ok) {
     const msg = await upstream.text().catch(() => "");
@@ -35,18 +31,12 @@ export async function GET(_req: Request, { params }: Ctx) {
     );
   }
 
-  // Pass through content type + disposition, but force a filename if missing
   const headers = new Headers();
-  const ct = upstream.headers.get("content-type") || "application/zip";
-  headers.set("content-type", ct);
+  headers.set("content-type", upstream.headers.get("content-type") || "application/zip");
 
   const cd = upstream.headers.get("content-disposition");
-  headers.set(
-    "content-disposition",
-    cd || `attachment; filename="geant4_${caseId}.zip"`
-  );
+  headers.set("content-disposition", cd || `attachment; filename="geant4_${caseId}.zip"`);
 
-  // Optional: avoid caching
   headers.set("cache-control", "no-store");
 
   return new Response(upstream.body, { status: 200, headers });
