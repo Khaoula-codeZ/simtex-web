@@ -1,56 +1,53 @@
+// app/api/download/geant4/[caseId]/route.ts
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+export const runtime = "nodejs"; // important: we stream bytes
+export const dynamic = "force-dynamic"; // avoid caching weirdness
 
-function getBaseUrl() {
-  // This MUST be set in Vercel env for Production (and Preview if you use preview deploys)
+type Ctx = { params: { caseId: string } };
+
+export async function GET(_req: Request, { params }: Ctx) {
+  const caseId = params.caseId;
+
   const base = process.env.SIMTEX_API_URL;
-  if (!base) return null;
-  return base.replace(/\/+$/, "");
-}
-
-export async function GET(
-  _req: Request,
-  { params }: { params: { caseId: string } }
-) {
-  const base = getBaseUrl();
   if (!base) {
     return NextResponse.json(
-      { error: "SIMTEX_API_URL is not set on Vercel." },
+      { error: "SIMTEX_API_URL is not set (Vercel env vars)." },
       { status: 500 }
     );
   }
 
-  const caseId = params.caseId;
-  const upstream = `${base}/download/geant4/${encodeURIComponent(caseId)}`;
+  // This should point to your BACKEND (Railway) endpoint that returns the ZIP.
+  // Example backend route: GET /download/geant4/:caseId
+  const url = `${base.replace(/\/$/, "")}/download/geant4/${encodeURIComponent(caseId)}`;
 
-  const r = await fetch(upstream, {
+  const upstream = await fetch(url, {
     method: "GET",
-    // don’t cache zip downloads on Vercel
-    cache: "no-store",
+    // If your Railway endpoint requires auth, add it here.
+    // headers: { Authorization: `Bearer ${process.env.SIMTEX_API_KEY}` },
   });
 
-  if (!r.ok) {
-    const txt = await r.text().catch(() => "");
+  if (!upstream.ok) {
+    const msg = await upstream.text().catch(() => "");
     return NextResponse.json(
-      { error: "Upstream ZIP fetch failed", status: r.status, body: txt.slice(0, 400) },
+      { error: `Backend download failed (${upstream.status}).`, detail: msg.slice(0, 500) },
       { status: 502 }
     );
   }
 
-  const body = r.body;
-  if (!body) {
-    return NextResponse.json({ error: "Upstream response has no body." }, { status: 502 });
-  }
+  // Pass through content type + disposition, but force a filename if missing
+  const headers = new Headers();
+  const ct = upstream.headers.get("content-type") || "application/zip";
+  headers.set("content-type", ct);
 
-  // Stream ZIP back to browser
-  return new NextResponse(body as any, {
-    status: 200,
-    headers: {
-      "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="geant4_${caseId}.zip"`,
-      "Cache-Control": "no-store",
-    },
-  });
+  const cd = upstream.headers.get("content-disposition");
+  headers.set(
+    "content-disposition",
+    cd || `attachment; filename="geant4_${caseId}.zip"`
+  );
+
+  // Optional: avoid caching
+  headers.set("cache-control", "no-store");
+
+  return new Response(upstream.body, { status: 200, headers });
 }
