@@ -1,11 +1,12 @@
-// app/api/download/geant4/[caseId]/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: any, context: any) {
-  const caseId = context?.params?.caseId;
+type Ctx = { params: { caseId: string } };
+
+export async function GET(_req: NextRequest, { params }: Ctx) {
+  const caseId = params?.caseId;
 
   if (!caseId) {
     return NextResponse.json({ error: "Missing caseId param." }, { status: 400 });
@@ -19,10 +20,9 @@ export async function GET(_req: any, context: any) {
     );
   }
 
-  const url = `${String(base).replace(/\/$/, "")}/download/geant4/${encodeURIComponent(caseId)}`;
+  const url = `${base.replace(/\/$/, "")}/download/geant4/${encodeURIComponent(caseId)}`;
 
-  const upstream = await fetch(url, { method: "GET" });
-
+  const upstream = await fetch(url);
   if (!upstream.ok) {
     const msg = await upstream.text().catch(() => "");
     return NextResponse.json(
